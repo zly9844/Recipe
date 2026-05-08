@@ -26,6 +26,7 @@ const fallbackImages = {
 
 const app = document.querySelector("#app");
 const authStorageKey = "culinary-journal-token";
+const draftPrefix = "culinary-journal-draft";
 let authToken = localStorage.getItem(authStorageKey) || "";
 
 const api = {
@@ -351,7 +352,7 @@ function renderDetail() {
 
 function renderEdit() {
   const recipe = state.editingId ? recipes.find((item) => item.id === state.editingId) : null;
-  const draft = recipe || emptyRecipe();
+  const draft = loadRecipeDraft(state.editingId) || recipe || emptyRecipe();
   return `
     ${topbar({ title: recipe ? "编辑菜谱" : "记录菜谱" })}
     <form class="content form-page" data-form="recipe">
@@ -371,9 +372,10 @@ function renderEdit() {
           ${["请选择分类", "早餐", "家常菜", "海鲜", "面食", "烘焙", "晚餐", "甜点", "轻食"].map((option) => `<option ${draft.category === option ? "selected" : ""}>${option}</option>`).join("")}
         </select>
       </div>
-      <div class="form-group two-fields">
+      <div class="form-group three-fields">
         <div><label>制作时间</label><input class="field" name="time" inputmode="numeric" placeholder="例如：45" value="${escapeAttr(draft.time)}"></div>
         <div><label>人份</label><input class="field" name="servings" inputmode="numeric" placeholder="2" value="${escapeAttr(draft.servings)}"></div>
+        <div><label>热量</label><input class="field" name="kcal" inputmode="numeric" placeholder="千卡" value="${escapeAttr(draft.kcal)}"></div>
       </div>
       <div class="form-group">
         <label>菜谱简介</label>
@@ -542,6 +544,9 @@ function bindEvents() {
         state.query = event.target.value;
         repaintCurrentList();
       }
+      if (event.target.closest("[data-form='recipe']")) {
+        saveCurrentDraft();
+      }
     });
 
     app.addEventListener("change", async (event) => {
@@ -552,6 +557,7 @@ function bindEvents() {
         try {
           const uploaded = await api.uploadImage(dataUrl);
           event.target.dataset.photoUrl = uploaded.url;
+          saveCurrentDraft();
           passiveToast("成品图已上传");
         } catch (error) {
           passiveToast(error.message || "图片上传失败");
@@ -567,6 +573,7 @@ function bindEvents() {
         try {
           const uploaded = await api.uploadImage(dataUrl);
           event.target.dataset.photoUrl = uploaded.url;
+          saveCurrentDraft();
           passiveToast("步骤照片已上传");
         } catch (error) {
           passiveToast(error.message || "图片上传失败");
@@ -679,15 +686,18 @@ async function handleAction(action, el) {
   if (action === "add-ingredient") {
     const list = app.querySelector("[data-list='ingredients']");
     list.insertAdjacentHTML("beforeend", ingredientEditRow());
+    saveCurrentDraft();
   }
   if (action === "add-step") {
     const list = app.querySelector("[data-list='steps']");
     list.insertAdjacentHTML("beforeend", stepEditRow({}, list.children.length));
     renumberStepRows();
+    saveCurrentDraft();
   }
   if (action === "remove-row") {
     el.closest("[data-ingredient-row], [data-step-row]")?.remove();
     renumberStepRows();
+    saveCurrentDraft();
   }
   if (action === "delete") {
     const recipe = recipes.find((item) => item.id === el.dataset.id);
@@ -726,34 +736,25 @@ async function completeLogin(payload) {
 }
 
 async function saveRecipeFromForm(form) {
-  const data = new FormData(form);
   const oldRecipe = state.editingId ? recipes.find((item) => item.id === state.editingId) : null;
-  const photo = form.querySelector("[data-input='photo']").dataset.photoUrl || oldRecipe?.photo || "";
-  const ingredients = [...form.querySelectorAll("[data-ingredient-row]")].map((row) => {
-    const [qty, name, tag] = row.querySelectorAll("input");
-    return { qty: qty.value.trim(), name: name.value.trim(), tag: tag.value.trim(), done: false };
-  }).filter((item) => item.qty || item.name);
-  const oldSteps = oldRecipe?.steps || [];
-  const steps = [...form.querySelectorAll("[data-step-row]")].map((row, index) => {
-    const fileInput = row.querySelector("[data-input='step-photo']");
-    return {
-      title: row.querySelector("[name='stepTitle']").value.trim() || `第 ${index + 1} 步`,
-      text: row.querySelector("[name='stepText']").value.trim(),
-      photo: fileInput.dataset.photoUrl || oldSteps[index]?.photo || ""
-    };
-  }).filter((step) => step.text || step.photo);
+  const draft = recipeFromForm(form);
+  const ingredients = draft.ingredients.filter((item) => item.qty || item.name);
+  const steps = draft.steps.map((step, index) => ({
+    ...step,
+    title: step.title || `第 ${index + 1} 步`
+  })).filter((step) => step.text || step.photo);
 
   const recipe = {
     id: oldRecipe?.id || "",
-    title: String(data.get("title") || "").trim(),
-    category: String(data.get("category") || "").replace("请选择分类", "") || "家常菜",
-    time: Number(String(data.get("time") || "").match(/\d+/)?.[0] || 30),
+    title: draft.title,
+    category: draft.category || "家常菜",
+    time: Number(String(draft.time || "").match(/\d+/)?.[0] || 30),
     difficulty: oldRecipe?.difficulty || "EASY",
-    servings: Number(String(data.get("servings") || "").match(/\d+/)?.[0] || 2),
-    kcal: oldRecipe?.kcal || 360,
+    servings: Number(String(draft.servings || "").match(/\d+/)?.[0] || 2),
+    kcal: Number(String(draft.kcal || "").match(/\d+/)?.[0] || 0),
     favorite: oldRecipe?.favorite || false,
-    photo: photo || fallbackImages.upload,
-    description: String(data.get("description") || "").trim() || "这是一道记录在私房菜谱里的家常味道。",
+    photo: draft.photo || fallbackImages.upload,
+    description: draft.description || "这是一道记录在私房菜谱里的家常味道。",
     ingredients: ingredients.length ? ingredients : [{ qty: "适量", name: "主要食材", tag: "新鲜", done: false }],
     steps: steps.length ? steps : [{ title: "第 1 步", text: "写下第一步做法。", photo: "" }]
   };
@@ -769,6 +770,8 @@ async function saveRecipeFromForm(form) {
   state.activeId = saved.id;
   state.editingId = null;
   state.route = "detail";
+  clearRecipeDraft(recipe.id);
+  clearRecipeDraft(null);
   toast("菜谱已保存");
 }
 
@@ -804,7 +807,7 @@ function emptyRecipe() {
     category: "",
     time: "",
     servings: 2,
-    kcal: 0,
+    kcal: "",
     photo: "",
     description: "",
     ingredients: [
@@ -822,6 +825,62 @@ function renumberStepRows() {
   app.querySelectorAll("[data-step-row] .step-num").forEach((node, index) => {
     node.textContent = index + 1;
   });
+}
+
+function draftKey(recipeId = state.editingId) {
+  return `${draftPrefix}:${state.currentUser?.id || "guest"}:${recipeId || "new"}`;
+}
+
+function loadRecipeDraft(recipeId = state.editingId) {
+  try {
+    const raw = localStorage.getItem(draftKey(recipeId));
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearRecipeDraft(recipeId = state.editingId) {
+  localStorage.removeItem(draftKey(recipeId));
+}
+
+function saveCurrentDraft() {
+  const form = app.querySelector("[data-form='recipe']");
+  if (!form) return;
+  localStorage.setItem(draftKey(), JSON.stringify(recipeFromForm(form)));
+  passiveStatus("已自动暂存");
+}
+
+function recipeFromForm(form) {
+  const data = new FormData(form);
+  const currentRecipe = state.editingId ? recipes.find((item) => item.id === state.editingId) : null;
+  const previousDraft = loadRecipeDraft(state.editingId);
+  const photo = form.querySelector("[data-input='photo']").dataset.photoUrl || previousDraft?.photo || currentRecipe?.photo || "";
+  const ingredients = [...form.querySelectorAll("[data-ingredient-row]")].map((row) => {
+    const [qty, name, tag] = row.querySelectorAll("input");
+    return { qty: qty.value.trim(), name: name.value.trim(), tag: tag.value.trim(), done: false };
+  });
+  const previousSteps = previousDraft?.steps || currentRecipe?.steps || [];
+  const steps = [...form.querySelectorAll("[data-step-row]")].map((row, index) => {
+    const fileInput = row.querySelector("[data-input='step-photo']");
+    return {
+      title: row.querySelector("[name='stepTitle']").value.trim(),
+      text: row.querySelector("[name='stepText']").value.trim(),
+      photo: fileInput.dataset.photoUrl || previousSteps[index]?.photo || ""
+    };
+  });
+
+  return {
+    title: String(data.get("title") || "").trim(),
+    category: String(data.get("category") || "").replace("请选择分类", "") || "",
+    time: String(data.get("time") || "").trim(),
+    servings: String(data.get("servings") || "").trim(),
+    kcal: String(data.get("kcal") || "").trim(),
+    photo,
+    description: String(data.get("description") || "").trim(),
+    ingredients,
+    steps
+  };
 }
 
 function readFileAsDataUrl(file) {
@@ -854,6 +913,22 @@ function passiveToast(message) {
   passiveToast.timer = window.setTimeout(() => {
     node.remove();
   }, 1300);
+}
+
+function passiveStatus(message) {
+  window.clearTimeout(passiveStatus.timer);
+  passiveStatus.timer = window.setTimeout(() => {
+    const existing = app.querySelector(".draft-status");
+    if (existing) {
+      existing.textContent = message;
+      return;
+    }
+    const node = document.createElement("div");
+    node.className = "draft-status";
+    node.textContent = message;
+    app.appendChild(node);
+    window.setTimeout(() => node.remove(), 900);
+  }, 500);
 }
 
 function toastHtml() {
