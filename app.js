@@ -552,9 +552,9 @@ function bindEvents() {
         try {
           const uploaded = await api.uploadImage(dataUrl);
           event.target.dataset.photoUrl = uploaded.url;
-          toast("成品图已上传");
+          passiveToast("成品图已上传");
         } catch (error) {
-          toast(error.message || "图片上传失败");
+          passiveToast(error.message || "图片上传失败");
         }
       }
       if (event.target.matches("[data-input='step-photo']")) {
@@ -567,9 +567,9 @@ function bindEvents() {
         try {
           const uploaded = await api.uploadImage(dataUrl);
           event.target.dataset.photoUrl = uploaded.url;
-          toast("步骤照片已上传");
+          passiveToast("步骤照片已上传");
         } catch (error) {
-          toast(error.message || "图片上传失败");
+          passiveToast(error.message || "图片上传失败");
         }
       }
     });
@@ -841,6 +841,18 @@ function toast(message) {
   toast.timer = window.setTimeout(() => {
     state.toast = "";
     render();
+  }, 1300);
+}
+
+function passiveToast(message) {
+  app.querySelector(".toast")?.remove();
+  const node = document.createElement("div");
+  node.className = "toast";
+  node.textContent = message;
+  app.appendChild(node);
+  window.clearTimeout(passiveToast.timer);
+  passiveToast.timer = window.setTimeout(() => {
+    node.remove();
   }, 1300);
 }
 
