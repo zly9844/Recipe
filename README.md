@@ -118,7 +118,7 @@ GET    /uploads/:userId/:filename
 1. 将 `recipe-mobile-web` 目录作为独立 GitHub 仓库推送。
 2. Render 控制台选择 `New +` -> `Blueprint`。
 3. 连接该 GitHub 仓库。
-4. Render 会读取 `render.yaml` 并创建服务、环境变量和 1GB 持久化磁盘。
+4. Render 会读取 `render.yaml` 并创建免费 Web Service。
 
 当前配置：
 
@@ -126,9 +126,8 @@ GET    /uploads/:userId/:filename
 Runtime: Node
 Node: 24.14.0
 Region: Singapore
-Plan: Starter
-Data Disk: /var/data
-DATA_DIR: /var/data
+Plan: Free
+DATA_DIR: /tmp/culinary-journal
 ```
 
-注意：SQLite 和上传图片都依赖持久化磁盘。不要用没有 Disk 的免费临时文件系统承载正式数据。
+注意：免费模式没有持久化磁盘，SQLite 数据和上传图片在服务重启或重新部署后可能丢失。正式使用请改回 Starter plan 并挂载 Persistent Disk。
