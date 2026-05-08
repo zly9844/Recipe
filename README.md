@@ -124,10 +124,11 @@ GET    /uploads/:userId/:filename
 
 ```text
 Runtime: Node
-Node: 24.14.0
+Node: 24.14.1
 Region: Singapore
 Plan: Free
 DATA_DIR: /tmp/culinary-journal
+Health Check: /api/health
 ```
 
 注意：免费模式没有持久化磁盘，SQLite 数据和上传图片在服务重启或重新部署后可能丢失。正式使用请改回 Starter plan 并挂载 Persistent Disk。

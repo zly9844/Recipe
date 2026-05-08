@@ -6,9 +6,10 @@ services:
     plan: free
     buildCommand: npm install
     startCommand: npm start
+    healthCheckPath: /api/health
     envVars:
       - key: NODE_VERSION
-        value: 24.14.0
+        value: 24.14.1
       - key: HOST
         value: 0.0.0.0
       - key: DATA_DIR

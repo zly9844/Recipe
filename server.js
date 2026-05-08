@@ -120,6 +120,11 @@ initializeDatabase();
 
 const server = http.createServer(async (req, res) => {
   try {
+    if (req.url === "/api/health") {
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
     if (req.url.startsWith("/api/auth")) {
       await handleAuthApi(req, res);
       return;
