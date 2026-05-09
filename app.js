@@ -311,7 +311,7 @@ function renderSelectionDock(selected) {
   if (!selected.length) {
     return `
       <div class="selection-dock">
-        <div><strong>Selected Recipes</strong><p>先像点餐一样添加想做的菜</p></div>
+        <div><strong>已选菜品</strong><p>先像点餐一样添加想做的菜</p></div>
         <button class="primary-button" data-action="saved">生成买菜清单</button>
       </div>
     `;
@@ -320,7 +320,7 @@ function renderSelectionDock(selected) {
     <div class="selection-dock">
       <div class="selection-summary">
         <span class="basket-count">${selected.length}</span>
-        <div><strong>Selected Recipes</strong><p>${selected.length} items in your list</p></div>
+        <div><strong>已选菜品</strong><p>已选择 ${selected.length} 道菜</p></div>
       </div>
       <div class="selection-avatars">
         ${selected.slice(0, 3).map((recipe) => `<img src="${recipe.photo || fallbackImages.upload}" alt="">`).join("")}
@@ -474,18 +474,18 @@ function renderSaved() {
   return `
     ${topbar({ back: true, title: "买菜清单" })}
     <section class="content shopping-page">
-      <p class="eyebrow">WEEKLY PREP</p>
-      <h2 class="shopping-title">Shopping List</h2>
-      <p class="shopping-subtitle">Consolidated ingredients from ${selected.length} recipes.</p>
+      <p class="eyebrow">本周备菜</p>
+      <h2 class="shopping-title">买菜清单</h2>
+      <p class="shopping-subtitle">根据 ${selected.length} 道已选菜品自动汇总食材。</p>
       <div class="shopping-actions">
-        <button class="secondary-pill" data-action="copy-shopping">${icon.bookmark} Copy</button>
-        <button class="share-pill" data-action="share-shopping">${icon.compass} Share</button>
+        <button class="secondary-pill" data-action="copy-shopping">${icon.bookmark} 复制</button>
+        <button class="share-pill" data-action="share-shopping">${icon.compass} 分享</button>
       </div>
       <section class="selected-panel">
-        <h3>Selected Recipes</h3>
+        <h3>已选菜品</h3>
         <div class="selected-tags">${selected.map((recipe) => `<button data-action="detail" data-id="${recipe.id}">${escapeHtml(recipe.title)}</button>`).join("") || "<span>还没有选择菜品</span>"}</div>
       </section>
-      <section class="total-panel"><strong>${totalItems}</strong><span>TOTAL ITEMS</span></section>
+      <section class="total-panel"><strong>${totalItems}</strong><span>项食材</span></section>
       <div class="shopping-groups">
         ${groups.map((group) => `
           <section class="shopping-group">
@@ -493,7 +493,7 @@ function renderSaved() {
             ${group.items.map((item) => `
               <div class="shopping-item">
                 <span class="shopping-check"></span>
-                <div><strong>${escapeHtml(item.name)}</strong><p>Used in: ${escapeHtml([...item.recipes].join(", "))}</p></div>
+                <div><strong>${escapeHtml(item.name)}</strong><p>用于：${escapeHtml([...item.recipes].join("、"))}</p></div>
                 <b>${escapeHtml(item.amount)}</b>
               </div>
             `).join("")}
@@ -510,7 +510,7 @@ function renderExplore() {
   return `
     ${topbar({ back: true, title: "发现灵感" })}
     <section class="content inspiration-page">
-      <p class="eyebrow">COMMUNITY POOL</p>
+      <p class="eyebrow">公共菜谱池</p>
       <h2 class="shopping-title">发现灵感</h2>
       <p class="shopping-subtitle">从大家上传过的菜谱池里，一键加入自己的菜单。</p>
       <div class="recipe-list">
@@ -1000,9 +1000,9 @@ function shoppingGroups(selected) {
   });
 
   const groups = [
-    { title: "Produce", icon: "◒", match: "produce", items: [] },
-    { title: "Meat & Dairy", icon: "♨", match: "meat", items: [] },
-    { title: "Pantry & Seasoning", icon: "▤", match: "pantry", items: [] }
+    { title: "蔬菜水果", icon: "◒", match: "produce", items: [] },
+    { title: "肉蛋奶类", icon: "♨", match: "meat", items: [] },
+    { title: "主食调味", icon: "▤", match: "pantry", items: [] }
   ];
 
   [...map.values()].forEach((item) => {
