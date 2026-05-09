@@ -293,12 +293,20 @@ button {
   align-items: center;
 }
 
-.selection-avatars img {
+.selection-avatars button {
+  display: block;
   width: 34px;
   height: 34px;
   margin-left: -8px;
+  overflow: hidden;
   border: 2px solid #f1e5db;
   border-radius: 999px;
+  background: white;
+}
+
+.selection-avatars img {
+  width: 34px;
+  height: 34px;
   object-fit: cover;
 }
 
@@ -357,13 +365,36 @@ button {
   gap: 10px;
 }
 
-.selected-tags button,
 .selected-tags span {
-  min-height: 30px;
-  padding: 0 13px;
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
   border-radius: 999px;
   background: white;
   color: var(--brand);
+  overflow: hidden;
+}
+
+.selected-tag-name {
+  min-height: 32px;
+  padding: 0 10px 0 13px;
+  background: transparent;
+  color: var(--brand);
+}
+
+.selected-tag-remove {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  min-height: 32px;
+  background: #fff0e6;
+  color: #b7352d;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.selected-tags > span:not(.selected-tag) {
+  padding: 0 13px;
 }
 
 .total-panel {

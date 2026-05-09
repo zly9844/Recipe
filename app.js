@@ -323,7 +323,7 @@ function renderSelectionDock(selected) {
         <div><strong>已选菜品</strong><p>已选择 ${selected.length} 道菜</p></div>
       </div>
       <div class="selection-avatars">
-        ${selected.slice(0, 3).map((recipe) => `<img src="${recipe.photo || fallbackImages.upload}" alt="">`).join("")}
+        ${selected.slice(0, 3).map((recipe) => `<button data-action="detail" data-id="${recipe.id}" aria-label="查看 ${escapeAttr(recipe.title)}"><img src="${recipe.photo || fallbackImages.upload}" alt=""></button>`).join("")}
       </div>
       <button class="primary-button" data-action="saved">生成买菜清单</button>
     </div>
@@ -483,7 +483,12 @@ function renderSaved() {
       </div>
       <section class="selected-panel">
         <h3>已选菜品</h3>
-        <div class="selected-tags">${selected.map((recipe) => `<button data-action="detail" data-id="${recipe.id}">${escapeHtml(recipe.title)}</button>`).join("") || "<span>还没有选择菜品</span>"}</div>
+        <div class="selected-tags">${selected.map((recipe) => `
+          <span class="selected-tag">
+            <button class="selected-tag-name" data-action="detail" data-id="${recipe.id}">${escapeHtml(recipe.title)}</button>
+            <button class="selected-tag-remove" data-action="remove-selected-recipe" data-id="${recipe.id}" aria-label="移除 ${escapeAttr(recipe.title)}">×</button>
+          </span>
+        `).join("") || "<span>还没有选择菜品</span>"}</div>
       </section>
       <section class="total-panel"><strong>${totalItems}</strong><span>项食材</span></section>
       <div class="shopping-groups">
@@ -725,6 +730,11 @@ async function handleAction(action, el) {
     state.selectedRecipeIds = state.selectedRecipeIds.includes(id)
       ? state.selectedRecipeIds.filter((item) => item !== id)
       : [...state.selectedRecipeIds, id];
+    saveSelectedRecipeIds();
+    render();
+  }
+  if (action === "remove-selected-recipe") {
+    state.selectedRecipeIds = state.selectedRecipeIds.filter((item) => item !== el.dataset.id);
     saveSelectedRecipeIds();
     render();
   }
