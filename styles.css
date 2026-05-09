@@ -597,6 +597,15 @@ button {
   margin: 24px 0 12px;
 }
 
+.detail-actions {
+  margin: 18px 0 4px;
+}
+
+.detail-actions .primary-button,
+.detail-actions .secondary-button {
+  min-height: 46px;
+}
+
 .section-title h2 {
   margin: 0;
   font-family: Georgia, "Times New Roman", serif;

@@ -234,6 +234,14 @@ async function handleRecipeApi(req, res) {
     return;
   }
 
+  if (req.method === "POST" && id.endsWith("/share")) {
+    const recipeId = id.replace(/\/share$/, "");
+    const body = await readJsonBody(req);
+    const updated = shareRecipeForUser(recipeId, currentUser.id, body.isPublic !== false);
+    sendJson(res, 200, updated);
+    return;
+  }
+
   if (req.method === "GET" && !id) {
     sendJson(res, 200, listRecipesForUser(currentUser.id));
     return;
@@ -375,6 +383,8 @@ function initializeDatabase() {
       servings INTEGER NOT NULL DEFAULT 2,
       kcal INTEGER NOT NULL DEFAULT 0,
       favorite INTEGER NOT NULL DEFAULT 0,
+      is_public INTEGER NOT NULL DEFAULT 0,
+      source_recipe_id TEXT NOT NULL DEFAULT '',
       photo TEXT NOT NULL DEFAULT '',
       description TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL,
@@ -407,6 +417,9 @@ function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_ingredients_recipe ON ingredients(recipe_id, sort_order);
     CREATE INDEX IF NOT EXISTS idx_steps_recipe ON steps(recipe_id, sort_order);
   `);
+
+  ensureRecipeColumn("is_public", "INTEGER NOT NULL DEFAULT 0");
+  ensureRecipeColumn("source_recipe_id", "TEXT NOT NULL DEFAULT ''");
 
   if (!getUserByEmail("demo@example.com")) {
     insertUser({
@@ -463,27 +476,48 @@ function importLegacyData() {
   }
 }
 
+function ensureRecipeColumn(name, definition) {
+  const exists = db.prepare("PRAGMA table_info(recipes)").all().some((column) => column.name === name);
+  if (!exists) db.exec(`ALTER TABLE recipes ADD COLUMN ${name} ${definition}`);
+}
+
 function listRecipesForUser(userId) {
   return db.prepare("SELECT * FROM recipes WHERE user_id = ? ORDER BY updated_at DESC").all(userId).map(hydrateRecipe);
 }
 
 function listPublicRecipes(currentUserId) {
-  const ownedTitles = new Set(listRecipesForUser(currentUserId).map((recipe) => recipe.title.trim().toLowerCase()));
-  return db.prepare("SELECT * FROM recipes ORDER BY updated_at DESC").all()
-    .map(hydrateRecipe)
+  const owned = listRecipesForUser(currentUserId);
+  const ownedByTitle = new Map(owned.map((recipe) => [recipe.title.trim().toLowerCase(), recipe.id]));
+  const ownedBySource = new Map(owned.filter((recipe) => recipe.sourceRecipeId).map((recipe) => [recipe.sourceRecipeId, recipe.id]));
+  return db.prepare(`
+    SELECT recipes.*, users.name AS author_name
+    FROM recipes
+    JOIN users ON users.id = recipes.user_id
+    WHERE recipes.is_public = 1
+    ORDER BY recipes.updated_at DESC
+  `).all()
+    .map((row) => ({ ...hydrateRecipe(row), authorName: row.author_name, isMine: row.user_id === currentUserId }))
     .filter((recipe, index, all) => all.findIndex((item) => item.title.trim().toLowerCase() === recipe.title.trim().toLowerCase()) === index)
-    .map((recipe) => ({ ...recipe, inMyMenu: ownedTitles.has(recipe.title.trim().toLowerCase()) }));
+    .map((recipe) => {
+      const ownedRecipeId = recipe.isMine ? recipe.id : ownedBySource.get(recipe.id) || ownedByTitle.get(recipe.title.trim().toLowerCase()) || "";
+      return { ...recipe, inMyMenu: Boolean(ownedRecipeId), ownedRecipeId };
+    });
 }
 
 function importRecipeForUser(sourceId, userId) {
   const sourceRow = db.prepare("SELECT * FROM recipes WHERE id = ?").get(sourceId);
   if (!sourceRow) throw httpError(404, "没有找到这道菜谱");
+  if (!sourceRow.is_public && sourceRow.user_id !== userId) throw httpError(403, "这道菜谱还没有公开分享");
   const source = hydrateRecipe(sourceRow);
+  const existing = db.prepare("SELECT * FROM recipes WHERE user_id = ? AND (source_recipe_id = ? OR lower(title) = lower(?))").get(userId, sourceId, source.title);
+  if (existing) return stripOwner(hydrateRecipe(existing));
   const now = new Date().toISOString();
   const copy = {
     ...source,
     id: crypto.randomUUID(),
     userId,
+    sourceRecipeId: sourceId,
+    isPublic: false,
     favorite: false,
     createdAt: now,
     updatedAt: now,
@@ -492,6 +526,18 @@ function importRecipeForUser(sourceId, userId) {
   };
   saveRecipe(copy);
   return stripOwner(copy);
+}
+
+function shareRecipeForUser(id, userId, isPublic) {
+  const recipe = getRecipeForUser(id, userId);
+  if (!recipe) throw httpError(404, "菜谱不存在或无权访问");
+  db.prepare("UPDATE recipes SET is_public = ?, updated_at = ? WHERE id = ? AND user_id = ?").run(
+    isPublic ? 1 : 0,
+    new Date().toISOString(),
+    id,
+    userId
+  );
+  return getRecipeForUser(id, userId);
 }
 
 function getRecipeForUser(id, userId) {
@@ -510,6 +556,8 @@ function hydrateRecipe(row) {
     servings: row.servings,
     kcal: row.kcal,
     favorite: Boolean(row.favorite),
+    isPublic: Boolean(row.is_public),
+    sourceRecipeId: row.source_recipe_id || "",
     photo: row.photo,
     description: row.description,
     ingredients: db.prepare("SELECT qty, name, tag, done FROM ingredients WHERE recipe_id = ? ORDER BY sort_order").all(row.id).map((item) => ({
@@ -528,8 +576,8 @@ function saveRecipe(recipe) {
   db.exec("BEGIN");
   try {
     db.prepare(`
-      INSERT INTO recipes (id, user_id, title, category, time, difficulty, servings, kcal, favorite, photo, description, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO recipes (id, user_id, title, category, time, difficulty, servings, kcal, favorite, is_public, source_recipe_id, photo, description, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         title = excluded.title,
         category = excluded.category,
@@ -538,6 +586,8 @@ function saveRecipe(recipe) {
         servings = excluded.servings,
         kcal = excluded.kcal,
         favorite = excluded.favorite,
+        is_public = excluded.is_public,
+        source_recipe_id = excluded.source_recipe_id,
         photo = excluded.photo,
         description = excluded.description,
         updated_at = excluded.updated_at
@@ -551,6 +601,8 @@ function saveRecipe(recipe) {
       recipe.servings,
       recipe.kcal,
       recipe.favorite ? 1 : 0,
+      recipe.isPublic ? 1 : 0,
+      recipe.sourceRecipeId || "",
       recipe.photo,
       recipe.description,
       recipe.createdAt,
@@ -703,6 +755,8 @@ function normalizeRecipe(input) {
     servings: Number(input.servings || 2),
     kcal: Number(input.kcal || 0),
     favorite: Boolean(input.favorite),
+    isPublic: Boolean(input.isPublic),
+    sourceRecipeId: String(input.sourceRecipeId || "").trim(),
     photo: String(input.photo || "").trim(),
     description: String(input.description || "").trim(),
     ingredients: Array.isArray(input.ingredients) ? input.ingredients.map(normalizeIngredient).filter((item) => item.name || item.qty) : [],

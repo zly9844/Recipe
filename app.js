@@ -109,6 +109,16 @@ const api = {
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || "添加菜谱失败");
     return payload;
+  },
+  async shareRecipe(id, isPublic) {
+    const response = await fetch(`/api/recipes/${id}/share`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...this.authHeaders() },
+      body: JSON.stringify({ isPublic })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "分享失败，请稍后重试");
+    return payload;
   }
 };
 
@@ -371,6 +381,12 @@ function renderDetail() {
         <div class="progress-head"><span>制作进度</span><span>${progress}% 完成</span></div>
         <div class="progress-track"><div class="progress-fill" style="width:${progress}%"></div></div>
 
+        <div class="detail-actions">
+          <button class="${recipe.isPublic ? "secondary-button" : "primary-button"}" data-action="share-recipe" data-id="${recipe.id}" data-public="${recipe.isPublic ? "false" : "true"}">
+            ${recipe.isPublic ? "取消分享到发现页" : "分享到发现页"}
+          </button>
+        </div>
+
         <div class="section-title"><h2>食材</h2><button class="link-button" data-action="edit" data-id="${recipe.id}">编辑</button></div>
         <div class="ingredient-panel">
           ${recipe.ingredients.map((item, index) => `
@@ -525,7 +541,7 @@ function renderSaved() {
 }
 
 function renderExplore() {
-  const pool = state.publicRecipes.length ? state.publicRecipes : recipes;
+  const pool = state.publicRecipes;
   return `
     ${topbar({ back: true, title: "发现灵感" })}
     <section class="content inspiration-page">
@@ -538,9 +554,9 @@ function renderExplore() {
             <img data-preview-image src="${recipe.photo || fallbackImages.upload}" alt="${escapeAttr(recipe.title)}">
             <div>
               <h3>${escapeHtml(recipe.title)}</h3>
-              <p>${escapeHtml(recipe.category || "家常菜")} · ${recipe.time} 分钟 · ${recipe.ingredients?.length || 0} 个食材</p>
-              <button class="primary-button" data-action="${recipe.inMyMenu ? "toggle-select-recipe" : "import-public-recipe"}" data-id="${recipe.id}">
-                ${recipe.inMyMenu ? "加入本周菜单" : "一键添加到我的菜单"}
+              <p>${escapeHtml(recipe.category || "家常菜")} · ${recipe.time} 分钟 · ${recipe.ingredients?.length || 0} 个食材${recipe.authorName ? ` · 来自 ${escapeHtml(recipe.authorName)}` : ""}</p>
+              <button class="primary-button" data-action="${recipe.inMyMenu ? "detail" : "import-public-recipe"}" data-id="${recipe.inMyMenu ? recipe.ownedRecipeId : recipe.id}">
+                ${recipe.isMine ? "查看我的菜谱" : recipe.inMyMenu ? "已添加，查看菜谱" : "添加到我的菜单"}
               </button>
             </div>
           </article>
@@ -577,6 +593,7 @@ function renderAdmin() {
               <div class="admin-actions">
                 <button data-action="detail" data-id="${recipe.id}">查看</button>
                 <button data-action="edit" data-id="${recipe.id}">编辑</button>
+                <button data-action="share-recipe" data-id="${recipe.id}" data-public="${recipe.isPublic ? "false" : "true"}">${recipe.isPublic ? "取消分享" : "分享"}</button>
                 <button class="danger" data-action="delete" data-id="${recipe.id}">删除</button>
               </div>
             </div>
@@ -765,11 +782,18 @@ async function handleAction(action, el) {
   }
   if (action === "import-public-recipe") {
     const imported = await api.importRecipe(el.dataset.id);
-    recipes = [imported, ...recipes];
+    const exists = recipes.some((item) => item.id === imported.id);
+    recipes = exists ? recipes.map((item) => (item.id === imported.id ? imported : item)) : [imported, ...recipes];
     state.publicRecipes = await api.publicRecipes().catch(() => state.publicRecipes);
-    state.selectedRecipeIds = [...new Set([...state.selectedRecipeIds, imported.id])];
-    saveSelectedRecipeIds();
-    toast("已添加到我的菜单");
+    toast("已添加到我的菜单，点菜页可以直接选择");
+  }
+  if (action === "share-recipe") {
+    const id = el.dataset.id;
+    const isPublic = el.dataset.public === "true";
+    const updated = await api.shareRecipe(id, isPublic);
+    recipes = recipes.map((item) => (item.id === updated.id ? updated : item));
+    state.publicRecipes = await api.publicRecipes().catch(() => state.publicRecipes);
+    toast(isPublic ? "已分享到发现页" : "已取消分享");
   }
   if (action === "favorite") {
     const recipe = recipes.find((item) => item.id === el.dataset.id);
@@ -882,6 +906,8 @@ async function saveRecipeFromForm(form) {
     servings: Number(String(draft.servings || "").match(/\d+/)?.[0] || 2),
     kcal: Number(String(draft.kcal || "").match(/\d+/)?.[0] || 0),
     favorite: oldRecipe?.favorite || false,
+    isPublic: oldRecipe?.isPublic || false,
+    sourceRecipeId: oldRecipe?.sourceRecipeId || "",
     photo: draft.photo || fallbackImages.upload,
     description: draft.description || "这是一道记录在私房菜谱里的家常味道。",
     ingredients: ingredients.length ? ingredients : [{ qty: "适量", name: "主要食材", tag: "新鲜", done: false }],
@@ -937,6 +963,8 @@ function emptyRecipe() {
     time: "",
     servings: 2,
     kcal: "",
+    isPublic: false,
+    sourceRecipeId: "",
     photo: "",
     description: "",
     ingredients: [
