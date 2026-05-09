@@ -121,6 +121,7 @@ let state = {
   lightboxImage: null,
   selectedCategory: "凉菜",
   selectedRecipeIds: [],
+  selectedDockOpen: false,
   publicRecipes: [],
   query: "",
   toast: "",
@@ -317,14 +318,27 @@ function renderSelectionDock(selected) {
     `;
   }
   return `
-    <div class="selection-dock">
-      <div class="selection-summary">
+    <div class="selection-dock ${state.selectedDockOpen ? "open" : ""}">
+      <button class="selection-summary" data-action="toggle-selected-dock" aria-label="查看已选菜品列表">
         <span class="basket-count">${selected.length}</span>
         <div><strong>已选菜品</strong><p>已选择 ${selected.length} 道菜</p></div>
-      </div>
+      </button>
       <div class="selection-avatars">
         ${selected.slice(0, 3).map((recipe) => `<button data-action="detail" data-id="${recipe.id}" aria-label="查看 ${escapeAttr(recipe.title)}"><img src="${recipe.photo || fallbackImages.upload}" alt=""></button>`).join("")}
       </div>
+      ${state.selectedDockOpen ? `
+        <div class="selected-dock-list">
+          ${selected.map((recipe) => `
+            <div class="selected-dock-item">
+              <button class="selected-dock-main" data-action="detail" data-id="${recipe.id}">
+                <img src="${recipe.photo || fallbackImages.upload}" alt="">
+                <span>${escapeHtml(recipe.title)}</span>
+              </button>
+              <button class="selected-dock-remove" data-action="remove-selected-recipe" data-id="${recipe.id}" aria-label="移除 ${escapeAttr(recipe.title)}">×</button>
+            </div>
+          `).join("")}
+        </div>
+      ` : ""}
       <button class="primary-button" data-action="saved">生成买菜清单</button>
     </div>
   `;
@@ -733,8 +747,13 @@ async function handleAction(action, el) {
     saveSelectedRecipeIds();
     render();
   }
+  if (action === "toggle-selected-dock") {
+    state.selectedDockOpen = !state.selectedDockOpen;
+    render();
+  }
   if (action === "remove-selected-recipe") {
     state.selectedRecipeIds = state.selectedRecipeIds.filter((item) => item !== el.dataset.id);
+    if (!state.selectedRecipeIds.length) state.selectedDockOpen = false;
     saveSelectedRecipeIds();
     render();
   }
