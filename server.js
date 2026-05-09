@@ -222,6 +222,18 @@ async function handleRecipeApi(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const id = decodeURIComponent(url.pathname.replace("/api/recipes", "").replace(/^\/+/, ""));
 
+  if (req.method === "GET" && url.pathname === "/api/recipes/public") {
+    sendJson(res, 200, listPublicRecipes(currentUser.id));
+    return;
+  }
+
+  if (req.method === "POST" && id.startsWith("import/")) {
+    const sourceId = id.replace(/^import\//, "");
+    const copied = importRecipeForUser(sourceId, currentUser.id);
+    sendJson(res, 201, copied);
+    return;
+  }
+
   if (req.method === "GET" && !id) {
     sendJson(res, 200, listRecipesForUser(currentUser.id));
     return;
@@ -453,6 +465,33 @@ function importLegacyData() {
 
 function listRecipesForUser(userId) {
   return db.prepare("SELECT * FROM recipes WHERE user_id = ? ORDER BY updated_at DESC").all(userId).map(hydrateRecipe);
+}
+
+function listPublicRecipes(currentUserId) {
+  const ownedTitles = new Set(listRecipesForUser(currentUserId).map((recipe) => recipe.title.trim().toLowerCase()));
+  return db.prepare("SELECT * FROM recipes ORDER BY updated_at DESC").all()
+    .map(hydrateRecipe)
+    .filter((recipe, index, all) => all.findIndex((item) => item.title.trim().toLowerCase() === recipe.title.trim().toLowerCase()) === index)
+    .map((recipe) => ({ ...recipe, inMyMenu: ownedTitles.has(recipe.title.trim().toLowerCase()) }));
+}
+
+function importRecipeForUser(sourceId, userId) {
+  const sourceRow = db.prepare("SELECT * FROM recipes WHERE id = ?").get(sourceId);
+  if (!sourceRow) throw httpError(404, "没有找到这道菜谱");
+  const source = hydrateRecipe(sourceRow);
+  const now = new Date().toISOString();
+  const copy = {
+    ...source,
+    id: crypto.randomUUID(),
+    userId,
+    favorite: false,
+    createdAt: now,
+    updatedAt: now,
+    ingredients: source.ingredients.map((item) => ({ ...item, done: false })),
+    steps: source.steps.map((step) => ({ ...step }))
+  };
+  saveRecipe(copy);
+  return stripOwner(copy);
 }
 
 function getRecipeForUser(id, userId) {

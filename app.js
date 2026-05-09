@@ -27,6 +27,7 @@ const fallbackImages = {
 const app = document.querySelector("#app");
 const authStorageKey = "culinary-journal-token";
 const draftPrefix = "culinary-journal-draft";
+const selectedStorageKey = "culinary-journal-selected";
 let authToken = localStorage.getItem(authStorageKey) || "";
 
 const api = {
@@ -94,6 +95,20 @@ const api = {
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || "图片上传失败");
     return payload;
+  },
+  async publicRecipes() {
+    const response = await fetch("/api/recipes/public", { headers: this.authHeaders() });
+    if (!response.ok) throw new Error("读取公共菜谱失败");
+    return response.json();
+  },
+  async importRecipe(id) {
+    const response = await fetch(`/api/recipes/import/${id}`, {
+      method: "POST",
+      headers: this.authHeaders()
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "添加菜谱失败");
+    return payload;
   }
 };
 
@@ -104,6 +119,9 @@ let state = {
   activeId: "",
   editingId: null,
   lightboxImage: null,
+  selectedCategory: "凉菜",
+  selectedRecipeIds: [],
+  publicRecipes: [],
   query: "",
   toast: "",
   loading: true,
@@ -126,6 +144,7 @@ async function init() {
   try {
     const payload = await api.me();
     state.currentUser = payload.user;
+    state.selectedRecipeIds = loadSelectedRecipeIds();
   } catch {
     authToken = "";
     localStorage.removeItem(authStorageKey);
@@ -142,6 +161,9 @@ async function refreshRecipes() {
   render();
   try {
     recipes = await api.list();
+    state.publicRecipes = await api.publicRecipes().catch(() => []);
+    state.selectedRecipeIds = state.selectedRecipeIds.filter((id) => recipes.some((recipe) => recipe.id === id));
+    saveSelectedRecipeIds();
     state.activeId ||= recipes[0]?.id || "";
     state.error = "";
   } catch (error) {
@@ -225,10 +247,10 @@ function renderAuth() {
 
 function tabs(active = "recipes") {
   const items = [
-    ["recipes", "菜谱", icon.utensils, "home"],
+    ["recipes", "点菜", icon.utensils, "home"],
     ["explore", "发现", icon.compass, "explore"],
     ["cook", "记录", icon.plus, "edit-new"],
-    ["saved", "收藏", icon.bookmark, "saved"]
+    ["saved", "清单", icon.bookmark, "saved"]
   ];
   return `
     <nav class="tabbar">
@@ -238,63 +260,78 @@ function tabs(active = "recipes") {
 }
 
 function renderHome() {
-  const filtered = filterRecipes();
-  const featured = recipes[0];
+  const visibleRecipes = recipesForCategory(state.selectedCategory);
+  const selected = selectedRecipes();
   return `
     ${topbar()}
-    <section class="content">
-      <label class="search">${icon.search}<input data-input="search" placeholder="搜索菜谱、食材或分类" value="${escapeAttr(state.query)}"></label>
-      ${featured ? renderFeatured(featured) : ""}
-      <div class="section-title">
-        <h2>我的菜谱</h2>
-        <div class="view-tools"><button class="tool-button">${icon.grid}</button><button class="tool-button">${icon.list}</button></div>
-      </div>
-      <div class="recipe-list">
-        ${filtered.length ? filtered.map(renderRecipeCard).join("") : `<div class="empty-state">还没有找到匹配的菜谱，换个关键词试试。</div>`}
-      </div>
-      <div class="section-title"><h2>按食材下厨</h2></div>
-      <div class="chips">
-        ${["菠菜", "鸡蛋", "牛油果", "鸡肉", "大蒜", "三文鱼"].map((item) => `<button class="chip" data-action="filter" data-value="${item}">${icon.leaf}${item}</button>`).join("")}
-      </div>
+    <section class="ordering-layout">
+      <aside class="category-rail">
+        ${menuCategories().map((category) => `
+          <button class="category-tab ${state.selectedCategory === category ? "active" : ""}" data-action="select-category" data-value="${category}">
+            <span>${categoryIcon(category)}</span>
+            <small>${category}</small>
+          </button>
+        `).join("")}
+      </aside>
+      <section class="menu-panel">
+        <div class="menu-heading">
+          <h2>${escapeHtml(state.selectedCategory)}</h2>
+          <p>${categorySubtitle(state.selectedCategory)}</p>
+        </div>
+        <div class="menu-list">
+          ${visibleRecipes.length ? visibleRecipes.map(renderMenuDishCard).join("") : `<div class="empty-state">这个分类还没有菜。可以去“记录”添加，或去“发现”一键加入。</div>`}
+        </div>
+      </section>
     </section>
-    <button class="fab" data-action="edit-new" aria-label="新增菜谱">${icon.plus}</button>
+    ${renderSelectionDock(selected)}
     ${tabs("recipes")}
     ${toastHtml()}
   `;
 }
 
-function renderFeatured(recipe) {
+function renderMenuDishCard(recipe) {
+  const selected = state.selectedRecipeIds.includes(recipe.id);
   return `
-    <div class="section-title"><h2>今日推荐</h2><button class="link-button" data-action="explore">查看全部</button></div>
-    <article class="featured-card">
-      <button class="photo-wrap" data-action="detail" data-id="${recipe.id}" aria-label="查看 ${escapeAttr(recipe.title)}">
+    <article class="menu-dish-card ${selected ? "selected" : ""}">
+      <button class="menu-dish-photo" data-action="detail" data-id="${recipe.id}" aria-label="查看 ${escapeAttr(recipe.title)}">
         <img data-preview-image src="${recipe.photo || fallbackImages.upload}" alt="${escapeAttr(recipe.title)}">
-        <div class="badges"><span class="badge">${icon.clock}${recipe.time} 分钟</span><span class="badge">${difficultyLabel(recipe.difficulty)}</span></div>
       </button>
-      <div class="featured-copy">
-        <h3>${escapeHtml(recipe.title)}</h3>
-        <p>${escapeHtml(recipe.description || "记录一道值得反复做的家常味道。")}</p>
-        <button class="primary-button" data-action="detail" data-id="${recipe.id}">开始制作</button>
+      <div class="menu-dish-body">
+        <button class="menu-dish-title" data-action="detail" data-id="${recipe.id}">
+          <h3>${escapeHtml(recipe.title)}</h3>
+          <div class="meta"><span>${icon.clock} ${recipe.time} 分钟</span><span>${difficultyLabel(recipe.difficulty)}</span></div>
+        </button>
+        <button class="add-dish-button ${selected ? "selected" : ""}" data-action="toggle-select-recipe" data-id="${recipe.id}" aria-label="${selected ? "移除" : "添加"}">${selected ? "✓" : "+"}</button>
       </div>
     </article>
   `;
 }
 
-function renderRecipeCard(recipe) {
-  return `
-    <article class="recipe-card">
-      <button class="photo-wrap" data-action="detail" data-id="${recipe.id}" aria-label="查看 ${escapeAttr(recipe.title)}">
-        <img data-preview-image src="${recipe.photo || fallbackImages.upload}" alt="${escapeAttr(recipe.title)}">
-      </button>
-      <div class="recipe-row">
-        <button class="recipe-card" data-action="detail" data-id="${recipe.id}">
-          <h3>${escapeHtml(recipe.title)}</h3>
-          <div class="meta"><span>${icon.clock} ${recipe.time} 分钟</span><span>${difficultyLabel(recipe.difficulty)}</span></div>
-        </button>
-        <button class="heart" data-action="favorite" data-id="${recipe.id}" aria-label="收藏">${recipe.favorite ? icon.heartFill : icon.heart}</button>
+function renderSelectionDock(selected) {
+  if (!selected.length) {
+    return `
+      <div class="selection-dock">
+        <div><strong>Selected Recipes</strong><p>先像点餐一样添加想做的菜</p></div>
+        <button class="primary-button" data-action="saved">生成买菜清单</button>
       </div>
-    </article>
+    `;
+  }
+  return `
+    <div class="selection-dock">
+      <div class="selection-summary">
+        <span class="basket-count">${selected.length}</span>
+        <div><strong>Selected Recipes</strong><p>${selected.length} items in your list</p></div>
+      </div>
+      <div class="selection-avatars">
+        ${selected.slice(0, 3).map((recipe) => `<img src="${recipe.photo || fallbackImages.upload}" alt="">`).join("")}
+      </div>
+      <button class="primary-button" data-action="saved">生成买菜清单</button>
+    </div>
   `;
+}
+
+function renderRecipeCard(recipe) {
+  return renderMenuDishCard(recipe);
 }
 
 function renderDetail() {
@@ -431,12 +468,37 @@ function stepEditRow(step = {}, index = 0) {
 }
 
 function renderSaved() {
-  const saved = recipes.filter((recipe) => recipe.favorite);
+  const selected = selectedRecipes();
+  const groups = shoppingGroups(selected);
+  const totalItems = groups.reduce((sum, group) => sum + group.items.length, 0);
   return `
-    ${topbar({ back: true, title: "我的收藏" })}
-    <section class="content">
-      <div class="recipe-list">
-        ${saved.length ? saved.map(renderRecipeCard).join("") : `<div class="empty-state">收藏的菜谱会出现在这里。</div>`}
+    ${topbar({ back: true, title: "买菜清单" })}
+    <section class="content shopping-page">
+      <p class="eyebrow">WEEKLY PREP</p>
+      <h2 class="shopping-title">Shopping List</h2>
+      <p class="shopping-subtitle">Consolidated ingredients from ${selected.length} recipes.</p>
+      <div class="shopping-actions">
+        <button class="secondary-pill" data-action="copy-shopping">${icon.bookmark} Copy</button>
+        <button class="share-pill" data-action="share-shopping">${icon.compass} Share</button>
+      </div>
+      <section class="selected-panel">
+        <h3>Selected Recipes</h3>
+        <div class="selected-tags">${selected.map((recipe) => `<button data-action="detail" data-id="${recipe.id}">${escapeHtml(recipe.title)}</button>`).join("") || "<span>还没有选择菜品</span>"}</div>
+      </section>
+      <section class="total-panel"><strong>${totalItems}</strong><span>TOTAL ITEMS</span></section>
+      <div class="shopping-groups">
+        ${groups.map((group) => `
+          <section class="shopping-group">
+            <h3><span>${group.icon}</span>${group.title}</h3>
+            ${group.items.map((item) => `
+              <div class="shopping-item">
+                <span class="shopping-check"></span>
+                <div><strong>${escapeHtml(item.name)}</strong><p>Used in: ${escapeHtml([...item.recipes].join(", "))}</p></div>
+                <b>${escapeHtml(item.amount)}</b>
+              </div>
+            `).join("")}
+          </section>
+        `).join("") || `<div class="empty-state">先在点菜页选择几道菜，就会自动生成买菜清单。</div>`}
       </div>
     </section>
     ${tabs("saved")}
@@ -444,16 +506,27 @@ function renderSaved() {
 }
 
 function renderExplore() {
-  const categories = [...new Set(recipes.map((recipe) => recipe.category).filter(Boolean))];
+  const pool = state.publicRecipes.length ? state.publicRecipes : recipes;
   return `
-    ${topbar({ back: true, title: "发现菜谱" })}
-    <section class="content">
-      <div class="section-title"><h2>按食材下厨</h2></div>
-      <div class="chips">${["菠菜", "鸡蛋", "牛油果", "鸡肉", "大蒜", "柠檬", "三文鱼", "意面"].map((item) => `<button class="chip" data-action="filter" data-value="${item}">${icon.leaf}${item}</button>`).join("")}</div>
-      <div class="section-title"><h2>分类</h2></div>
-      <div class="chips">${categories.map((item) => `<button class="chip" data-action="filter" data-value="${item}">${icon.compass}${item}</button>`).join("")}</div>
-      <div class="section-title"><h2>快速选择</h2></div>
-      <div class="recipe-list">${recipes.slice(0, 3).map(renderRecipeCard).join("")}</div>
+    ${topbar({ back: true, title: "发现灵感" })}
+    <section class="content inspiration-page">
+      <p class="eyebrow">COMMUNITY POOL</p>
+      <h2 class="shopping-title">发现灵感</h2>
+      <p class="shopping-subtitle">从大家上传过的菜谱池里，一键加入自己的菜单。</p>
+      <div class="recipe-list">
+        ${pool.map((recipe) => `
+          <article class="inspiration-card">
+            <img data-preview-image src="${recipe.photo || fallbackImages.upload}" alt="${escapeAttr(recipe.title)}">
+            <div>
+              <h3>${escapeHtml(recipe.title)}</h3>
+              <p>${escapeHtml(recipe.category || "家常菜")} · ${recipe.time} 分钟 · ${recipe.ingredients?.length || 0} 个食材</p>
+              <button class="primary-button" data-action="${recipe.inMyMenu ? "toggle-select-recipe" : "import-public-recipe"}" data-id="${recipe.id}">
+                ${recipe.inMyMenu ? "加入本周菜单" : "一键添加到我的菜单"}
+              </button>
+            </div>
+          </article>
+        `).join("") || `<div class="empty-state">公共池暂时没有菜谱。</div>`}
+      </div>
     </section>
     ${tabs("explore")}
   `;
@@ -643,6 +716,32 @@ async function handleAction(action, el) {
     state.route = "detail";
     render();
   }
+  if (action === "select-category") {
+    state.selectedCategory = el.dataset.value;
+    render();
+  }
+  if (action === "toggle-select-recipe") {
+    const id = el.dataset.id;
+    state.selectedRecipeIds = state.selectedRecipeIds.includes(id)
+      ? state.selectedRecipeIds.filter((item) => item !== id)
+      : [...state.selectedRecipeIds, id];
+    saveSelectedRecipeIds();
+    render();
+  }
+  if (action === "copy-shopping") {
+    await copyShoppingList();
+  }
+  if (action === "share-shopping") {
+    await shareShoppingList();
+  }
+  if (action === "import-public-recipe") {
+    const imported = await api.importRecipe(el.dataset.id);
+    recipes = [imported, ...recipes];
+    state.publicRecipes = await api.publicRecipes().catch(() => state.publicRecipes);
+    state.selectedRecipeIds = [...new Set([...state.selectedRecipeIds, imported.id])];
+    saveSelectedRecipeIds();
+    toast("已添加到我的菜单");
+  }
   if (action === "favorite") {
     const recipe = recipes.find((item) => item.id === el.dataset.id);
     if (!recipe) return;
@@ -729,6 +828,7 @@ async function completeLogin(payload) {
   authToken = payload.token;
   localStorage.setItem(authStorageKey, authToken);
   state.currentUser = payload.user;
+  state.selectedRecipeIds = loadSelectedRecipeIds();
   state.route = "home";
   state.activeId = "";
   toast(`欢迎，${payload.user.name}`);
@@ -788,7 +888,7 @@ async function persist(recipe, message = "") {
 
 function repaintCurrentList() {
   if (state.route === "home") {
-    app.querySelector(".recipe-list").innerHTML = filterRecipes().map(renderRecipeCard).join("") || `<div class="empty-state">还没有找到匹配的菜谱，换个关键词试试。</div>`;
+    render();
   }
   if (state.route === "admin") render();
 }
@@ -825,6 +925,135 @@ function renumberStepRows() {
   app.querySelectorAll("[data-step-row] .step-num").forEach((node, index) => {
     node.textContent = index + 1;
   });
+}
+
+function menuCategories() {
+  return ["凉菜", "荤菜", "蔬菜", "汤品", "主食"];
+}
+
+function categoryIcon(category) {
+  return { 凉菜: "✳", 荤菜: "♨", 蔬菜: "◒", 汤品: "♨", 主食: "◓" }[category] || "•";
+}
+
+function categorySubtitle(category) {
+  return {
+    凉菜: "Fresh starters to awaken your palate",
+    荤菜: "Protein dishes for the center of the table",
+    蔬菜: "Greens and vegetables for balance",
+    汤品: "Warm soups for the whole meal",
+    主食: "Rice, noodles and staple dishes"
+  }[category] || "Choose dishes like ordering at a restaurant";
+}
+
+function recipeMenuCategory(recipe) {
+  const text = `${recipe.category || ""} ${recipe.title || ""}`.toLowerCase();
+  if (/(凉|冷|拍黄瓜|木耳|沙拉|salad|tofu|豆腐)/i.test(text)) return "凉菜";
+  if (/(汤|羹|soup|stock)/i.test(text)) return "汤品";
+  if (/(饭|面|粥|米|risotto|pasta|linguine|rice|noodle|主食)/i.test(text)) return "主食";
+  if (/(鸡|肉|鱼|虾|牛|猪|羊|salmon|chicken|beef|pork|seafood|荤|海鲜)/i.test(text)) return "荤菜";
+  if (/(蔬|菜|菠菜|番茄|牛油果|黄瓜|蘑菇|avocado|spinach|vegetable|轻食)/i.test(text)) return "蔬菜";
+  return recipe.category || "蔬菜";
+}
+
+function recipesForCategory(category) {
+  const q = state.query.trim().toLowerCase();
+  return recipes.filter((recipe) => {
+    const matchesCategory = recipeMenuCategory(recipe) === category;
+    const haystack = [recipe.title, recipe.category, recipe.description, recipe.ingredients.map((i) => i.name).join(" ")].join(" ").toLowerCase();
+    return matchesCategory && (!q || haystack.includes(q));
+  });
+}
+
+function selectedRecipes() {
+  return state.selectedRecipeIds.map((id) => recipes.find((recipe) => recipe.id === id)).filter(Boolean);
+}
+
+function selectedKey() {
+  return `${selectedStorageKey}:${state.currentUser?.id || "guest"}`;
+}
+
+function loadSelectedRecipeIds() {
+  try {
+    const raw = localStorage.getItem(selectedKey());
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveSelectedRecipeIds() {
+  localStorage.setItem(selectedKey(), JSON.stringify(state.selectedRecipeIds));
+}
+
+function shoppingGroups(selected) {
+  const map = new Map();
+  selected.forEach((recipe) => {
+    recipe.ingredients.forEach((ingredient) => {
+      const name = (ingredient.name || "").trim();
+      if (!name) return;
+      const key = name.toLowerCase();
+      const current = map.get(key) || { name, qtys: [], recipes: new Set(), group: ingredientGroup(name) };
+      if (ingredient.qty) current.qtys.push(ingredient.qty);
+      current.recipes.add(recipe.title);
+      map.set(key, current);
+    });
+  });
+
+  const groups = [
+    { title: "Produce", icon: "◒", match: "produce", items: [] },
+    { title: "Meat & Dairy", icon: "♨", match: "meat", items: [] },
+    { title: "Pantry & Seasoning", icon: "▤", match: "pantry", items: [] }
+  ];
+
+  [...map.values()].forEach((item) => {
+    const target = groups.find((group) => group.match === item.group) || groups[2];
+    target.items.push({ ...item, amount: mergeAmounts(item.qtys) });
+  });
+
+  return groups.filter((group) => group.items.length);
+}
+
+function ingredientGroup(name) {
+  if (/(鸡|肉|鱼|虾|牛|猪|羊|蛋|芝士|奶|cheese|butter|chicken|salmon|beef|pork|egg)/i.test(name)) return "meat";
+  if (/(米|面|油|盐|酱|糖|醋|stock|rice|pasta|sauce|honey|soy|flour)/i.test(name)) return "pantry";
+  return "produce";
+}
+
+function mergeAmounts(qtys) {
+  if (!qtys.length) return "适量";
+  const parsed = qtys.map(parseAmount);
+  const unit = parsed[0].unit;
+  if (unit && parsed.every((item) => item.unit === unit && Number.isFinite(item.value))) {
+    const total = parsed.reduce((sum, item) => sum + item.value, 0);
+    return `${Number(total.toFixed(1))}${unit}`;
+  }
+  return [...new Set(qtys)].join(" + ");
+}
+
+function parseAmount(text) {
+  const match = String(text).trim().match(/^(\d+(?:\.\d+)?)\s*(.*)$/);
+  return match ? { value: Number(match[1]), unit: match[2].trim() } : { value: NaN, unit: "" };
+}
+
+function shoppingListText() {
+  const selected = selectedRecipes();
+  const lines = [`买菜清单（${selected.length} 道菜）`, ...selected.map((recipe) => `- ${recipe.title}`), ""];
+  shoppingGroups(selected).forEach((group) => {
+    lines.push(group.title);
+    group.items.forEach((item) => lines.push(`- ${item.name}: ${item.amount}`));
+  });
+  return lines.join("\n");
+}
+
+async function copyShoppingList() {
+  await navigator.clipboard?.writeText(shoppingListText());
+  passiveToast("买菜清单已复制");
+}
+
+async function shareShoppingList() {
+  const text = shoppingListText();
+  if (navigator.share) await navigator.share({ title: "买菜清单", text });
+  else await copyShoppingList();
 }
 
 function draftKey(recipeId = state.editingId) {
